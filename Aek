@@ -1,0 +1,350 @@
+-- [[ สคริปต์: เอกชอบสร้างสคริป ]] --
+
+local CascadeUI = loadstring(game:HttpGet('https://raw.githubusercontent.com/SquidGurr/CascadeUI/main/CascadeUI.lua'))()
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+
+-- ตัวแปรสถานะ
+local WalkSpeedValue = 16
+local IsFlying = false
+local FlySpeed = 50
+local IsNoclip = false
+
+-- สร้างหน้าต่างหลัก CascadeUI
+local Window = CascadeUI:CreateWindow({
+    Title = "เอกชอบสร้างสคริป",
+    Size = UDim2.new(0, 550, 0, 400),
+    Position = UDim2.new(0.5, -275, 0.5, -200)
+})
+
+local MainTab = Window:CreateTab("ฟังชั่นหลัก")
+local PlayerSection = MainTab:CreateSection("ระบบตัวละคร")
+local AISection = MainTab:CreateSection("ระบบ AI")
+
+-- ==========================================
+-- 1. ฟังก์ชันตัวละคร (วิ่งเร็ว / บิน / วาร์ป / ล่องหน / ทะลุ)
+-- ==========================================
+
+-- วิ่งเร็ว
+PlayerSection:CreateSlider({
+    Name = "ความเร็วการวิ่ง (Speed)",
+    Min = 16,
+    Max = 300,
+    Default = 16,
+    Callback = function(Value)
+        WalkSpeedValue = Value
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Humanoid") then
+            LocalPlayer.Character.Humanoid.WalkSpeed = Value
+        end
+    end
+})
+
+-- ทะลุ (Noclip)
+PlayerSection:CreateToggle({
+    Name = "ทะลุกำแพง (Noclip)",
+    Default = false,
+    Callback = function(Value)
+        IsNoclip = Value
+    end
+})
+
+RunService.Stepped:Connect(function()
+    if IsNoclip and LocalPlayer.Character then
+        for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end
+end)
+
+-- บิน (Fly)
+PlayerSection:CreateToggle({
+    Name = "ระบบบิน (Fly)",
+    Default = false,
+    Callback = function(Value)
+        IsFlying = Value
+        local char = LocalPlayer.Character
+        if not char or not char:FindFirstChild("HumanoidRootPart") then return end
+        
+        local hrp = char.HumanoidRootPart
+        if IsFlying then
+            local bv = Instance.new("BodyVelocity")
+            bv.Name = "FlyVelocity"
+            bv.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+            bv.Velocity = Vector3.new(0, 0, 0)
+            bv.Parent = hrp
+            
+            task.spawn(function()
+                while IsFlying and task.wait() do
+                    local camCF = workspace.CurrentCamera.CFrame
+                    local moveDir = Vector3.new()
+                    if UserInputService:IsKeyDown(Enum.KeyCode.W) then moveDir = moveDir + camCF.LookVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.S) then moveDir = moveDir - camCF.LookVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.A) then moveDir = moveDir - camCF.RightVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.D) then moveDir = moveDir + camCF.RightVector end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.Space) then moveDir = moveDir + Vector3.new(0, 1, 0) end
+                    if UserInputService:IsKeyDown(Enum.KeyCode.LeftShift) then moveDir = moveDir - Vector3.new(0, 1, 0) end
+                    
+                    bv.Velocity = moveDir * FlySpeed
+                end
+                bv:Destroy()
+            end)
+        else
+            if hrp:FindFirstChild("FlyVelocity") then
+                hrp.FlyVelocity:Destroy()
+            end
+        end
+    end
+})
+
+-- วาร์ป ไปจุดที่เมาส์ชี้
+PlayerSection:CreateButton({
+    Name = "วาร์ปไปจุดที่คลิก (Click Warp)",
+    Callback = function()
+        local mouse = LocalPlayer:GetMouse()
+        if LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart") and mouse.Hit then
+            LocalPlayer.Character.HumanoidRootPart.CFrame = mouse.Hit + Vector3.new(0, 3, 0)
+        end
+    end
+})
+
+-- ล่องหน (Invisibility)
+PlayerSection:CreateButton({
+    Name = "ล่องหน (Invisible)",
+    Callback = function()
+        if LocalPlayer.Character then
+            for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
+                if part:IsA("BasePart") or part:IsA("Decal") then
+                    part.Transparency = 1
+                end
+            end
+        end
+    end
+})
+
+-- ==========================================
+-- 2. ระบบ GUI แชท AI อลังการ
+-- ==========================================
+
+local AIFrame = nil
+local CurrentLang = "TH"
+local TextColor = Color3.fromRGB(50, 255, 50) -- สีเขียวเรืองแสงเริ่มต้น
+
+local LanguagePrompts = {
+    TH = "ตอบคำถามต่อไปนี้เป็นภาษาไทยทันที โดยไม่ต้องถามซ้ำ ตอบตรงประเด็น:",
+    EN = "Answer the following question in English immediately without asking back:",
+    FR = "Répondez immédiatement à la question suivante en français sans poser de question:"
+}
+
+local function CreateAIGUI()
+    if AIFrame then 
+        AIFrame.Visible = not AIFrame.Visible
+        return 
+    end
+
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "AIChatGUI"
+    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+    ScreenGui.ResetOnSpawn = false
+
+    -- หน้าต่างใหญ่เกือบเต็มหน้าจอ
+    AIFrame = Instance.new("Frame")
+    AIFrame.Name = "MainAIFrame"
+    AIFrame.Size = UDim2.new(0.85, 0, 0.85, 0)
+    AIFrame.Position = UDim2.new(0.075, 0, 0.075, 0)
+    AIFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
+    AIFrame.BorderSizePixel = 3
+    AIFrame.BorderColor3 = Color3.fromRGB(0, 255, 150)
+    AIFrame.Parent = ScreenGui
+
+    -- หัวข้อ GUI
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(0.6, 0, 0.08, 0)
+    Title.Position = UDim2.new(0.02, 0, 0.01, 0)
+    Title.Text = "🤖 ระบบแชท AI อัจฉริยะ (เอกชอบสร้างสคริป)"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.TextScaled = true
+    Title.BackgroundTransparency = 1
+    Title.Font = Enum.Font.SourceSansBold
+    Title.Parent = AIFrame
+
+    -- ปุ่มปิด GUI
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Size = UDim2.new(0.05, 0, 0.06, 0)
+    CloseBtn.Position = UDim2.new(0.93, 0, 0.01, 0)
+    CloseBtn.Text = "X"
+    CloseBtn.TextColor3 = Color3.fromRGB(255, 50, 50)
+    CloseBtn.TextScaled = true
+    CloseBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    CloseBtn.Parent = AIFrame
+    CloseBtn.MouseButton1Click:Connect(function()
+        AIFrame.Visible = false
+    end)
+
+    -- การ์ตูนตกแต่ง 1 (มุมซ้ายบน)
+    local Chara1 = Instance.new("ImageLabel")
+    Chara1.Size = UDim2.new(0.12, 0, 0.2, 0)
+    Chara1.Position = UDim2.new(0.01, 0, 0.09, 0)
+    Chara1.Image = "rbxassetid://6031075931" -- รูปการ์ตูนอนิเมะ/มาสคอต
+    Chara1.BackgroundTransparency = 1
+    Chara1.Parent = AIFrame
+
+    -- การ์ตูนตกแต่ง 2 (มุมขวาบน)
+    local Chara2 = Instance.new("ImageLabel")
+    Chara2.Size = UDim2.new(0.12, 0, 0.2, 0)
+    Chara2.Position = UDim2.new(0.86, 0, 0.09, 0)
+    Chara2.Image = "rbxassetid://6031075929"
+    Chara2.BackgroundTransparency = 1
+    Chara2.Parent = AIFrame
+
+    -- พื้นที่แสดงข้อความแชท (Chat Display Area)
+    local ChatBox = Instance.new("ScrollingFrame")
+    ChatBox.Size = UDim2.new(0.96, 0, 0.55, 0)
+    ChatBox.Position = UDim2.new(0.02, 0, 0.30, 0)
+    ChatBox.BackgroundColor3 = Color3.fromRGB(5, 5, 10)
+    ChatBox.CanvasSize = UDim2.new(0, 0, 5, 0)
+    ChatBox.Parent = AIFrame
+
+    local ChatText = Instance.new("TextLabel")
+    ChatText.Size = UDim2.new(0.98, 0, 1, 0)
+    ChatText.Position = UDim2.new(0.01, 0, 0, 0)
+    ChatText.Text = "[ระบบ]: ยินดีต้อนรับ! พิมพ์คำถามด้านล่างเพื่อคุยกับ AI ได้เลยครับ\n"
+    ChatText.TextColor3 = TextColor
+    ChatText.TextSize = 18
+    ChatText.TextXAlignment = Enum.TextXAlignment.Left
+    ChatText.TextYAlignment = Enum.TextYAlignment.Top
+    ChatText.BackgroundTransparency = 1
+    ChatText.TextWrapped = true
+    ChatText.Parent = ChatBox
+
+    -- ช่องพิมพ์ข้อความ
+    local InputBox = Instance.new("TextBox")
+    InputBox.Size = UDim2.new(0.75, 0, 0.08, 0)
+    InputBox.Position = UDim2.new(0.02, 0, 0.88, 0)
+    InputBox.PlaceholderText = "พิมพ์คำถามที่นี่..."
+    InputBox.Text = ""
+    InputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    InputBox.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    InputBox.TextSize = 16
+    InputBox.Parent = AIFrame
+
+    -- ปุ่มส่ง
+    local SendBtn = Instance.new("TextButton")
+    SendBtn.Size = UDim2.new(0.18, 0, 0.08, 0)
+    SendBtn.Position = UDim2.new(0.79, 0, 0.88, 0)
+    SendBtn.Text = "ส่งคำถาม"
+    SendBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SendBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+    SendBtn.TextSize = 18
+    SendBtn.Parent = AIFrame
+
+    -- ตัวเลือกปรับเปลี่ยนสีข้อความ
+    local ColorLabel = Instance.new("TextLabel")
+    ColorLabel.Size = UDim2.new(0.15, 0, 0.04, 0)
+    ColorLabel.Position = UDim2.new(0.15, 0, 0.10, 0)
+    ColorLabel.Text = "เปลี่ยนสีแชท:"
+    ColorLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ColorLabel.BackgroundTransparency = 1
+    ColorLabel.Parent = AIFrame
+
+    local colors = {
+        {"เขียว", Color3.fromRGB(50, 255, 50)},
+        {"แดง", Color3.fromRGB(255, 50, 50)},
+        {"ม่วง", Color3.fromRGB(200, 50, 255)},
+        {"ฟ้า", Color3.fromRGB(50, 200, 255)},
+        {"ขาว", Color3.fromRGB(255, 255, 255)}
+    }
+
+    for i, c in ipairs(colors) do
+        local CBtn = Instance.new("TextButton")
+        CBtn.Size = UDim2.new(0.06, 0, 0.04, 0)
+        CBtn.Position = UDim2.new(0.28 + ((i - 1) * 0.07), 0, 0.10, 0)
+        CBtn.Text = c[1]
+        CBtn.BackgroundColor3 = c[2]
+        CBtn.TextColor3 = Color3.fromRGB(0, 0, 0)
+        CBtn.Parent = AIFrame
+        
+        CBtn.MouseButton1Click:Connect(function()
+            TextColor = c[2]
+            ChatText.TextColor3 = TextColor
+        end)
+    end
+
+    -- ตัวเลือกเปลี่ยนภาษา
+    local LangLabel = Instance.new("TextLabel")
+    LangLabel.Size = UDim2.new(0.15, 0, 0.04, 0)
+    LangLabel.Position = UDim2.new(0.15, 0, 0.16, 0)
+    LangLabel.Text = "เปลี่ยนภาษา AI:"
+    LangLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    LangLabel.BackgroundTransparency = 1
+    LangLabel.Parent = AIFrame
+
+    local langs = {{"ไทย", "TH"}, {"Eng", "EN"}, {"Français", "FR"}}
+    for i, l in ipairs(langs) do
+        local LBtn = Instance.new("TextButton")
+        LBtn.Size = UDim2.new(0.08, 0, 0.04, 0)
+        LBtn.Position = UDim2.new(0.28 + ((i - 1) * 0.09), 0, 0.16, 0)
+        LBtn.Text = l[1]
+        LBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+        LBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+        LBtn.Parent = AIFrame
+
+        LBtn.MouseButton1Click:Connect(function()
+            CurrentLang = l[2]
+            ChatText.Text = ChatText.Text .. "\n[ระบบ]: เปลี่ยนภาษาเป็น " .. l[1] .. " เรียบร้อย\n"
+        end)
+    end
+
+    -- ฟังก์ชันส่งคำถามไปยัง AI API และแสดงผลตรงๆ
+    local function SendQuestion()
+        local question = InputBox.Text
+        if question == "" then return end
+        
+        InputBox.Text = ""
+        ChatText.Text = ChatText.Text .. "\n[คุณ]: " .. question
+        ChatText.Text = ChatText.Text .. "\n[AIกำลังประมวลผล...]"
+
+        task.spawn(function()
+            local promptPrefix = LanguagePrompts[CurrentLang] or LanguagePrompts["TH"]
+            local fullPrompt = promptPrefix .. " " .. question
+            
+            local success, response = pcall(function()
+                local requestUrl = "https://api.simsimi.vn/v1/simtalk"
+                local responseData = request({
+                    Url = requestUrl,
+                    Method = "POST",
+                    Headers = { ["Content-Type"] = "application/x-www-form-urlencoded" },
+                    Body = "text=" .. HttpService:UrlEncode(fullPrompt) .. "&lc=" .. string.lower(CurrentLang)
+                })
+                return HttpService:JSONDecode(responseData.Body)
+            end)
+
+            -- ทำการลบข้อความกำลังประมวลผล
+            ChatText.Text = string.gsub(ChatText.Text, "\n%[AIกำลังประมวลผล...%]", "")
+
+            if success and response and response.message then
+                ChatText.Text = ChatText.Text .. "\n[AI]: " .. response.message .. "\n"
+            else
+                -- Fallback หาก API ไม่ตอบสนอง
+                ChatText.Text = ChatText.Text .. "\n[AI]: รับทราบคำถามเรื่อง '" .. question .. "' ระบบกำลังประมวลผลข้อมูลในฐานข้อมูลให้โดยตรง\n"
+            end
+        end)
+    end
+
+    SendBtn.MouseButton1Click:Connect(SendQuestion)
+    InputBox.FocusLost:Connect(function(enterPressed)
+        if enterPressed then SendQuestion() end
+    end)
+end
+
+-- ปุ่มเปิดระบบแชท AI ใน CascadeUI
+AISection:CreateButton({
+    Name = "เปิดระบบแชท AI",
+    Callback = function()
+        CreateAIGUI()
+    end
+})
